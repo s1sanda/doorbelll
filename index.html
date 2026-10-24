@@ -3,24 +3,28 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Doorbell Phone Proxy</title>
+    <title>Smart Doorbell Proxy</title>
     <style>
         body { font-family: -apple-system, BlinkMacSystemFont, sans-serif; text-align: center; padding: 20px; background: #111; color: #fff; }
-        button { background: #007AFF; color: white; border: none; padding: 18px 32px; font-size: 20px; border-radius: 12px; cursor: pointer; width: 80%; max-width: 300px; margin: 15px 0; }
+        button { background: #007AFF; color: white; border: none; padding: 15px 25px; font-size: 18px; border-radius: 12px; cursor: pointer; width: 80%; max-width: 300px; margin: 10px auto; display: block; }
         button.active { background: #34C759; }
+        button:disabled { background: #444; color: #888; cursor: not-allowed; }
         #status { font-size: 18px; margin: 15px 0; font-weight: 600; color: #ffcc00; }
         #log { background: #222; color: #00ffcc; padding: 10px; border-radius: 8px; font-family: monospace; font-size: 12px; text-align: left; height: 120px; overflow-y: auto; margin-top: 20px; }
-        .meter { width: 100%; height: 24px; background: #333; border-radius: 12px; overflow: hidden; margin-top: 15px; }
+        .meter { width: 100%; height: 20px; background: #333; border-radius: 10px; overflow: hidden; margin-top: 15px; }
         #level { width: 0%; height: 100%; background: #007AFF; transition: width 0.05s linear; }
     </style>
 </head>
 <body>
 
-    <h2>Doorbell Phone Listener</h2>
-    <p>Place phone near the chime speaker.</p>
+    <h2>Smart Doorbell Proxy</h2>
+    <p>Keep phone plugged in near the chime.</p>
     
-    <button id="startBtn" onclick="initListener()">Start Listening</button>
-    <div id="status">Status: Waiting to start...</div>
+    <button id="micBtn" onclick="initMic()">1. Enable Mic & Wake Lock</button>
+    <button id="calBtn" onclick="calibrateChime()" disabled>2. Calibrate Doorbell Chime</button>
+    <button id="listenBtn" onclick="startListening()" disabled>3. Start Active Listening</button>
+    
+    <div id="status">Status: Waiting for microphone...</div>
     
     <div class="meter"><div id="level"></div></div>
 
@@ -28,6 +32,11 @@
     <div id="log">Ready.<br></div>
 
     <script>
+        let audioCtx, analyser, micStream;
+        let targetBin = null;
+        let isRunning = false;
+        let wakeLock = null;
+
         function log(msg) {
             const logBox = document.getElementById('log');
             if (logBox) {
@@ -36,63 +45,134 @@
             }
         }
 
-        async function initListener() {
-            log("Button clicked!");
+        // Request Screen Wake Lock to keep phone awake and running unattended
+        async function requestWakeLock() {
             try {
-                // Request Notification Permission First
+                if ('wakeLock' in navigator) {
+                    wakeLock = await navigator.wakeLock.request('screen');
+                    log("Screen Wake Lock active (Phone will not sleep).");
+                    
+                    wakeLock.addEventListener('release', () => {
+                        log("Wake Lock released.");
+                    });
+                } else {
+                    log("Wake Lock API not supported on this browser.");
+                }
+            } catch (err) {
+                log(`Wake Lock error: ${err.name}, ${err.message}`);
+            }
+        }
+
+        // Re-acquire wake lock if visibility changes
+        document.addEventListener('visibilitychange', async () => {
+            if (wakeLock !== null && document.visibilityState === 'visible') {
+                await requestWakeLock();
+            }
+        });
+
+        async function initMic() {
+            try {
                 if ("Notification" in window && Notification.permission !== "granted") {
                     await Notification.requestPermission();
                 }
 
-                log("Requesting mic access...");
-                const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-                log("Mic granted!");
+                micStream = await navigator.mediaDevices.getUserMedia({ audio: true });
+                audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+                if (audioCtx.state === 'suspended') await audioCtx.resume();
 
-                const audioCtx = new (window.AudioContext || window.webkitAudioContext)();
-                if (audioCtx.state === 'suspended') {
-                    await audioCtx.resume();
-                }
+                analyser = audioCtx.createAnalyser();
+                analyser.fftSize = 1024;
+                audioCtx.createMediaStreamSource(micStream).connect(analyser);
 
-                const analyser = audioCtx.createAnalyser();
-                analyser.fftSize = 512;
-                
-                audioCtx.createMediaStreamSource(stream).connect(analyser);
+                await requestWakeLock();
 
-                const btn = document.getElementById("startBtn");
-                btn.textContent = "Listening Active";
-                btn.className = "active";
-                document.getElementById("status").textContent = "Status: Monitoring...";
-                log("Listening loop initialized.");
-
-                const dataArray = new Uint8Array(analyser.frequencyBinCount);
-
-                function loop() {
-                    analyser.getByteFrequencyData(dataArray);
-                    let maxVal = 0;
-                    for (let i = 0; i < dataArray.length; i++) {
-                        if (dataArray[i] > maxVal) maxVal = dataArray[i];
-                    }
-                    
-                    const meter = document.getElementById("level");
-                    if (meter) {
-                        meter.style.width = Math.min(100, Math.round((maxVal / 255) * 100)) + "%";
-                    }
-                    
-                    // Threshold check (adjust if needed)
-                    if (maxVal > 160) {
-                        log("CHIME DETECTED! Peak: " + maxVal);
-                        if ("Notification" in window && Notification.permission === "granted") {
-                            new Notification("Doorbell Ring! 🔔", { body: "Chime heard by phone proxy." });
-                        }
-                    }
-                    requestAnimationFrame(loop);
-                }
-                loop();
-
+                document.getElementById("micBtn").textContent = "Mic & Wake Lock Active ✓";
+                document.getElementById("micBtn").classList.add("active");
+                document.getElementById("calBtn").disabled = false;
+                document.getElementById("status").textContent = "Status: Ready to calibrate.";
+                log("Mic initialized and wake lock engaged.");
             } catch (err) {
                 log("ERROR: " + err.message);
                 alert("Error: " + err.message);
             }
+        }
+
+        function calibrateChime() {
+            log("CALIBRATING: Ring your doorbell now! (Listening for 3s)...");
+            document.getElementById("status").textContent = "Status: RING YOUR DOORBELL NOW!";
+            
+            let maxPeak = 0;
+            let dominantBin = 0;
+            let startTime = Date.now();
+
+            function captureLoop() {
+                let dataArray = new Uint8Array(analyser.frequencyBinCount);
+                analyser.getByteFrequencyData(dataArray);
+                
+                for (let i = 0; i < dataArray.length; i++) {
+                    if (dataArray[i] > maxPeak) {
+                        maxPeak = dataArray[i];
+                        dominantBin = i;
+                    }
+                }
+
+                if (Date.now() - startTime < 3000) {
+                    requestAnimationFrame(captureLoop);
+                } else {
+                    targetBin = dominantBin;
+                    log(`Calibration complete! Chime Frequency Bin: ${targetBin} (Peak: ${maxPeak})`);
+                    document.getElementById("status").textContent = "Status: Chime learned successfully!";
+                    document.getElementById("calBtn").textContent = "Calibrated ✓";
+                    document.getElementById("calBtn").classList.add("active");
+                    document.getElementById("listenBtn").disabled = false;
+                }
+            }
+            captureLoop();
+        }
+
+        function startListening() {
+            isRunning = true;
+            document.getElementById("listenBtn").textContent = "Active Listening Running";
+            document.getElementById("listenBtn").classList.add("active");
+            document.getElementById("micBtn").disabled = true;
+            document.getElementById("calBtn").disabled = true;
+            document.getElementById("status").textContent = "Status: Monitoring for door chime...";
+            log("Smart filter running. Screen staying awake.");
+
+            const dataArray = new Uint8Array(analyser.frequencyBinCount);
+            let cooldown = false;
+
+            function monitorLoop() {
+                if (!isRunning) return;
+
+                analyser.getByteFrequencyData(dataArray);
+
+                let maxVal = Math.max(...dataArray);
+                document.getElementById("level").style.width = Math.min(100, Math.round((maxVal / 255) * 100)) + "%";
+
+                let chimeVolume = (dataArray[targetBin - 1] + dataArray[targetBin] + dataArray[targetBin + 1]) / 3;
+
+                if (chimeVolume > 120 && !cooldown) {
+                    log(`CHIME MATCHED! Intensity: ${Math.round(chimeVolume)}`);
+                    
+                    if ("Notification" in window && Notification.permission === "granted") {
+                        new Notification("door", { 
+                            body: "Someone is at the door!",
+                            vibrate: [300, 100, 300]
+                        });
+                    }
+
+                    cooldown = true;
+                    document.getElementById("status").textContent = "ALERT SENT! Cooling down...";
+                    setTimeout(() => {
+                        cooldown = false;
+                        document.getElementById("status").textContent = "Status: Monitoring for door chime...";
+                    }, 4000);
+                }
+
+                requestAnimationFrame(monitorLoop);
+            }
+            monitorLoop();
         }
     </script>
 </body>
