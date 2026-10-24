@@ -1,0 +1,88 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Doorbell Proxy Listener</title>
+    <style>
+        body { font-family: -apple-system, BlinkMacSystemFont, sans-serif; text-align: center; padding: 40px; background: #111; color: #fff; }
+        button { background: #007AFF; color: white; border: none; padding: 15px 30px; font-size: 18px; border-radius: 8px; cursor: pointer; margin: 10px; }
+        button.active { background: #34C759; }
+        #status { font-size: 20px; margin-top: 20px; font-weight: bold; }
+        .meter { width: 100%; height: 20px; background: #333; border-radius: 10px; margin-top: 20px; overflow: hidden; }
+        #level { width: 0%; height: 100%; background: #007AFF; transition: width 0.1s; }
+    </style>
+</head>
+<body>
+
+    <h2>Doorbell Phone Proxy</h2>
+    <p>Place this phone near your doorbell speaker.</p>
+    
+    <button id="startBtn" onclick="startListening()">Start Listening</button>
+    <div id="status">Status: Idle</div>
+    
+    <div class="meter"><div id="level"></div></div>
+
+    <script>
+        let audioContext, analyser, microphone, javascriptNode;
+        let isListening = false;
+
+        // Adjust threshold based on environment noise (0 to 255)
+        const VOLUME_THRESHOLD = 180; 
+
+        async function startListening() {
+            try {
+                // Request microphone access on the phone
+                const stream = await navigator.mediaDevices.getUserMedia({ audio: true, video: false });
+                
+                audioContext = new (window.AudioContext || window.webkitAudioContext)();
+                analyser = audioContext.createAnalyser();
+                microphone = audioContext.createMediaStreamSource(stream);
+                
+                analyser.fftSize = 512;
+                microphone.connect(analyser);
+                
+                isListening = true;
+                document.getElementById("startBtn").textContent = "Listening Active";
+                document.getElementById("startBtn").classList.add("active");
+                document.getElementById("status").textContent = "Status: Monitoring for chime...";
+                
+                // Request browser notification permission for watch mirroring
+                if (Notification.permission !== "granted") {
+                    await Notification.requestPermission();
+                }
+
+                detectChime();
+            } catch (err) {
+                alert("Microphone permission denied or error: " + err.message);
+            }
+        }
+
+        function detectChime() {
+            if (!isListening) return;
+
+            let array = new Uint8Array(analyser.frequencyBinCount);
+            analyser.getByteFrequencyData(array);
+
+            // Calculate average volume level across frequencies
+            let sum = array.reduce((a, b) => a + b, 0);
+            let average = sum / array.length;
+
+            // Update visual meter on phone screen
+            document.getElementById("level").style.width = Math.min(100, (average / 100) * 100) + "%";
+
+            // Check if sound spike exceeds threshold (Doorbell chime detected)
+            if (average > VOLUME_THRESHOLD) {
+                triggerAlert();
+                // Cooldown to prevent spamming triggers from a single long ring
+                isListening = false;
+                setTimeout(() => { isListening = true; }, 3000); 
+            }
+
+            requestAnimationFrame(detectChime);
+        }
+
+        function triggerAlert() {
+            document.getElementById("status--></script>
+</body>
+</html>
